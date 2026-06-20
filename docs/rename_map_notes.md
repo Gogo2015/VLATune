@@ -1,9 +1,9 @@
-# rename_map & control_mode — the two 0%-success failure modes
+# rename_map & control_mode: the two 0%-success failure modes
 
 Two documented bugs cause **0% eval success with no crash**. Both are checked by
 the smoke tests. This file records the analysis and the decision rule.
 
-## Failure mode #1 — image-key mismatch (`--rename_map`)
+## Failure mode #1: image-key mismatch (`--rename_map`)
 
 The policy's `input_features` keys must exactly match the observation keys coming
 from the dataset/env, because **key names are encoded inside the normalization
@@ -35,9 +35,9 @@ reaches the model.
 > So for the **standard baseline path, rename_map is most likely NOT needed.**
 > It becomes necessary if you swap in a checkpoint trained with different camera
 > names, or a raw/community LIBERO dataset. (cf. lerobot issue #2318 where a
-> rename_map raised a spurious visual-mismatch error — confirm against `--help`.)
+> rename_map raised a spurious visual-mismatch error; confirm against `--help`.)
 
-## Failure mode #2 — control_mode mismatch (relative vs absolute)
+## Failure mode #2: control_mode mismatch (relative vs absolute)
 
 LIBERO supports `relative` (default) and `absolute` action parameterization. A
 checkpoint trained with one and evaluated with the other produces valid-looking
@@ -54,9 +54,9 @@ finite, in-range actions, flip to `absolute` and re-run a 2-episode probe before
 committing to a 50-episode run. Record which one gave non-zero success here:
 
 - Observed working control_mode for `HuggingFaceVLA/smolvla_libero`: **`relative`**
-  (CONFIRMED 2026-06-09 on Colab T4 — 83% success on a 6-episode probe, so
+  (CONFIRMED 2026-06-09 on Colab T4: 83% success on a 6-episode probe, so
   non-zero → `relative` is correct, no need to try `absolute`).
-- Observed rename_map need: **NONE** (CONFIRMED — eval ran clean with no
+- Observed rename_map need: **NONE** (CONFIRMED: eval ran clean with no
   `--rename_map`; dataset/env keys already matched the policy).
 
 ## Quick triage table

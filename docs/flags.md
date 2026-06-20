@@ -1,17 +1,17 @@
-# LeRobot CLI flags — reconciled reference
+# LeRobot CLI flags: reconciled reference
 
-> **Source of truth precedence:** the installed version's `--help` **wins** over
+> **Source of truth precedence:** the installed version's `--help` wins over
 > anything written here. This file is reconciled against the official LeRobot v0.5
-> docs (huggingface.co/docs/lerobot/en/libero and .../smolvla) as of **2026-06-09**.
+> docs (huggingface.co/docs/lerobot/en/libero and .../smolvla) as of 2026-06-09.
 > Run `scripts/reconcile_flags.sh` after install to dump the *actual* `--help`
 > into `docs/flags_help_raw.txt` and update this file if anything differs.
 
 ## Entry points
 
-- `lerobot-eval` — run policy rollouts in an env, report success rates.
-- `lerobot-train` — fine-tune a policy on a dataset (used for SFT; see `docs/SFT_RUNBOOK.md`).
+- `lerobot-eval`: run policy rollouts in an env, report success rates.
+- `lerobot-train`: fine-tune a policy on a dataset (used for SFT; see `docs/SFT_RUNBOOK.md`).
 
-## `lerobot-eval` — verified flags (from official LIBERO docs)
+## `lerobot-eval` verified flags (from official LIBERO docs)
 
 | Flag | Value / example | Notes |
 |---|---|---|
@@ -54,15 +54,15 @@ lerobot-eval \
 ```
 > Validated 2026-06-09 on Colab T4: this config produced 83% on a 6-episode probe
 > (control_mode=relative, no rename_map, n_action_steps=10). `n_action_steps=10`
-> is the key speed flag — without it ~400s/episode, with it ~100s/episode.
+> is the key speed flag. Without it ~400s/episode, with it ~100s/episode.
 
 ## Policy inputs / outputs (LIBERO env, official)
 
-- `observation.state` — **8-dim** proprioception (eef pos, axis-angle orientation, gripper qpos).
-- `observation.images.image` — main camera (`agentview_image`), HWC uint8.
-- `observation.images.image2` — wrist camera (`robot0_eye_in_hand_image`), HWC uint8.
-- **action** — `Box(-1, 1, shape=(7,))` = 6D eef delta + 1D gripper.
-- LeRobot **enforces the `observation.images.*` prefix**. The policy's
+- `observation.state`: 8-dim proprioception (eef pos, axis-angle orientation, gripper qpos).
+- `observation.images.image`: main camera (`agentview_image`), HWC uint8.
+- `observation.images.image2`: wrist camera (`robot0_eye_in_hand_image`), HWC uint8.
+- `action`: `Box(-1, 1, shape=(7,))` = 6D eef delta + 1D gripper.
+- LeRobot enforces the `observation.images.*` prefix. The policy's
   `input_features` keys must match the (possibly renamed) observation keys,
   because key names are baked into the normalization-stats layer.
 

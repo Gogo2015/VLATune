@@ -1,10 +1,10 @@
-# Phase 3 SFT — VALIDATED runbook (smoke passed 2026-06-15)
+# Phase 3 SFT: VALIDATED runbook (smoke passed 2026-06-15)
 
 The 100-step smoke run passed every gate on a Colab Pro+ **A100-80GB**:
 loss ↓ (0.88→0.43), checkpoint saved to Drive, batch 64 fits (no OOM),
 **~2 steps/s → 20k-step run ≈ 2.8 h**, and the checkpoint loads + runs in
-`lerobot-eval`. Below is the exact, working recipe and every non-obvious fix the
-smoke surfaced. Stack: lerobot 0.5.1, torch 2.10.0+cu128, transformers 5.3.0,
+`lerobot-eval`. Below is the recipe plus the non-obvious fixes the smoke
+surfaced. Stack: lerobot 0.5.1, torch 2.10.0+cu128, transformers 5.3.0,
 python 3.12.13, datasets 4.0.0.
 (Torch pin reconciled 2026-06-16 to match the as-run record in
 `results/sft_libero_goal.json` / `results/baseline_libero_goal.json`; the
@@ -24,29 +24,29 @@ python 3.12.13, datasets 4.0.0.
    episode-filtered *download* fetches the wrong files and the `episode_index`
    filter then matches zero rows → `ValueError: Instruction "train" corresponds
    to no data!`. **Fix: download the full `data/` + `meta/` once (~35 GB, images
-   are embedded in parquet — `video_keys: []`, no separate videos), then the
+   are embedded in parquet, `video_keys: []`, no separate videos), then the
    episode_index filter selects the 428 goal episodes correctly** (lerobot globs
    all present parquet and filters on the real `episode_index` column;
    `_build_index_mapping` also uses real loaded data, so this is correct).
 
-3. **Camera mismatch — `smolvla_base` wants 3 cameras, LIBERO has 2.** Base
+3. **Camera mismatch: `smolvla_base` wants 3 cameras, LIBERO has 2.** Base
    `input_features` = `camera1/camera2/camera3` (+ state[6]); LIBERO provides
    `observation.images.image`/`image2` (+ state[8]). `make_policy` only rebuilds
-   input_features from the dataset `if not cfg.input_features` — and the base
+   input_features from the dataset `if not cfg.input_features`, and the base
    ships them populated, so it keeps camera1/2/3. **Fix: `--rename_map` mapping
    image→camera1, image2→camera2.** Then `{camera1,camera2} ⊆ {camera1,2,3}` so
    the visual-feature check passes (`validate_visual_features_consistency` accepts
    either-direction subset), and at runtime the missing camera3 is simply skipped
    (`empty_cameras=0` → padding loop breaks). State[8]/action[7] auto-pad to
    `max_state_dim`/`max_action_dim`=32, so only cameras need renaming.
-   (`--policy.input_features={}` does NOT work — `from_pretrained` reloads the
+   (`--policy.input_features={}` does NOT work. `from_pretrained` reloads the
    checkpoint's own config and ignores the CLI clear.)
 
 4. **EVAL of our SFT checkpoint needs the SAME `--rename_map`.** Our checkpoint
    keeps camera1/2/3 input_features, so when evaluating it the LIBERO env's
    image/image2 must be renamed too. (This differs from the official
    `HuggingFaceVLA/smolvla_libero`, whose config natively uses image/image2 and
-   needs no rename — that's why the 85% baseline eval didn't use one.)
+   needs no rename. That is why the 85% baseline eval didn't use one.)
 
 5. **Pre-create `~/.libero/config.yaml` before any eval subprocess.** LIBERO's
    first import calls `input()` (custom-dataset-path prompt); in a subprocess
@@ -59,7 +59,7 @@ Flag note: rename_map is the **top-level** `--rename_map` for both
 ## Validated FULL train command (20k steps)
 
 ```bash
-# Prereq: full data on disk —
+# Prereq: full data on disk first:
 #   snapshot_download("HuggingFaceVLA/libero", repo_type="dataset",
 #                     revision="v3.0", allow_patterns=["data/*","meta/*"])
 lerobot-train \

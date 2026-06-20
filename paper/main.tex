@@ -1,0 +1,378 @@
+\documentclass[11pt]{article}
+
+% Standard, Overleaf-safe packages only
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\graphicspath{{figures/}{../results/figures/}}
+
+% Convenience macros
+\newcommand{\libgoal}{LIBERO-Goal}
+\newcommand{\libten}{\texttt{libero\_10}}
+\newcommand{\psft}{\pi_{\mathrm{SFT}}}
+\newcommand{\pcsucc}{\mathrm{pc\_success}}
+
+\title{\textbf{Reward-Weighted Behavior Cloning for Flow-Matching\\
+Vision-Language-Action Policies: A Dual-Suite Null on LIBERO}}
+
+\author{
+  Gaurav Mitra\\
+  Georgia Institute of Technology\thanks{Correspondence: \texttt{mitragaurav10@gmail.com}. Code and
+  all result files: \url{https://github.com/Gogo2015/VLATune}.}
+}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Supervised fine-tuning (SFT) of vision-language-action (VLA) models tends to plateau, and
+reinforcement learning (RL) is the obvious next step. Modern VLAs, though, emit actions through a
+flow-matching denoiser with no tractable per-action log-probability, so PPO does not apply. We
+study a lightweight alternative that fits flow matching: filtered, reward-weighted behavior
+cloning on a policy's own successful rollouts, regularized toward the SFT policy by a vector-field
+distillation anchor that stands in for an intractable marginal KL. Using SmolVLA (450M) on LIBERO
+and a compute-frugal pipeline (a consumer GPU plus preemptible cloud, about \$20--60 total), we
+evaluate the method in two regimes under a paired \emph{collection-equals-evaluation} protocol:
+the saturated, in-distribution \libgoal{} suite (about 89\%) and an unsaturated, demo-seeded
+\libten{} (LIBERO-Long, about 44\%). In neither regime does the method improve the policy durably.
+Success rises for one iteration and returns to baseline the next ($89.0 \to 91.0 \to 89.4$ on
+\libgoal{}; $44.0 \to 47.5 \to 42.5$ on \libten{}), a within-noise redistribution rather than a
+learned gain. Two mechanisms explain the pattern: a marginal-task rescue-then-reversal, and a
+starvation floor for tasks with zero seed successes. The null is informative because it holds even
+with real headroom and no filter starvation. The contribution is the method, the paired protocol,
+a map of where lightweight RL can and cannot move a flow-matching VLA, and the dual-suite null
+itself.
+\end{abstract}
+
+\section{Introduction}
+
+Generalist robot manipulation increasingly relies on \emph{vision-language-action} (VLA) models: a
+single policy mapping camera images and a natural-language instruction to motor actions across
+many tasks~\citep{kim2024openvla,shukor2025smolvla}. Two facts shape the research loop. First, the
+strongest VLAs are large (OpenVLA is 7B~\citep{kim2024openvla}), which puts them out of reach of
+modest compute. Second, improving a VLA with reinforcement learning is unsolved for the modern
+variants whose action head is a flow-matching or diffusion model~\citep{chi2023diffusion,lipman2023flow}:
+such a head produces actions by iteratively denoising noise, so the marginal likelihood of a
+sampled action chunk is intractable and PPO's probability ratio~\citep{schulman2017ppo} cannot be
+formed.
+
+SmolVLA~\citep{shukor2025smolvla} addresses the first fact. At 450M parameters (about 100M of them
+a trainable action expert, with a frozen VLM backbone) it is competitive on LIBERO while training
+on a single consumer-class GPU. That makes the whole SFT-to-RL loop affordable, and turns the
+second fact into a concrete, runnable question:
+
+\begin{quote}
+\emph{Can a lightweight, flow-matching-compatible RL step (filtered, reward-weighted behavior
+cloning on the policy's own successes, anchored to the SFT policy by a vector-field trust-region)
+improve a SmolVLA VLA beyond supervised fine-tuning on LIBERO?}
+\end{quote}
+
+We pick an objective that never needs an action log-probability: reward-weighted
+regression~\citep{peters2007rwr,peng2019awr}, adapted to flow matching~\citep{orwcfm2025}. This
+sidesteps the intractable-likelihood problem instead of working around it, as the noise-injection
+and two-layer-MDP methods do~\citep{ren2024dppo,chen2025pirl,reinflow2025,flowgrpo2025}. We then
+test the method as carefully as the compute budget allows and report what we find.
+
+\paragraph{Finding.} Across both a saturated in-distribution suite and an unsaturated but
+bootstrappable one, the method does not improve the policy durably. Aggregate success rises in the
+first RL iteration, and the second erases it; the per-task gains reverse on the same tasks that
+drove them. The up-then-down trajectory is itself the evidence that the bump is noise, not signal.
+
+\paragraph{Contributions.}
+\begin{enumerate}\itemsep2pt
+  \item A tractable, flow-matching-native RL recipe (reward-weighted filtered BC with a
+  vector-field distillation anchor as a KL surrogate), built as a custom fine-tune step on top of
+  SmolVLA and validated by a gated smoke ladder (Section~\ref{sec:method}).
+  \item A paired \emph{collection-equals-evaluation} protocol that turns each iteration's rollout
+  collection into that policy's per-task evaluation at no extra cost, with identical initial states
+  across iterations (Section~\ref{sec:method}).
+  \item A dual-suite null: no durable gain on saturated \libgoal{} or on demo-seeded \libten{}.
+  This is stronger than a single-suite null, because it holds with real headroom and no filter
+  starvation (Section~\ref{sec:results}).
+  \item Two mechanisms behind the null, rescue-then-reversal of marginal tasks and a starvation
+  floor, and a map of where the method can and cannot move the policy (Section~\ref{sec:discussion}).
+\end{enumerate}
+
+\section{Background and Related Work}
+
+\paragraph{SmolVLA and flow-matching action experts.}
+SmolVLA~\citep{shukor2025smolvla} pairs a compact vision-language backbone with a small (about
+100M) transformer action expert that produces an action \emph{chunk} via flow
+matching~\citep{lipman2023flow}: starting from Gaussian noise, it integrates a learned velocity
+field to a clean action. Training regresses the predicted velocity onto the noise-to-action
+target, a supervised MSE with no normalizing constant and no marginal action likelihood. During
+fine-tuning the backbone is frozen and only the action expert is trained, which is what makes the
+model data- and compute-efficient.
+
+\paragraph{LIBERO.}
+LIBERO~\citep{liu2023libero} is a simulated (MuJoCo) manipulation benchmark with sub-suites
+including Goal (10 tasks that share a scene but vary the instruction, isolating goal understanding)
+and Long (\libten{}, 10 long-horizon multi-step tasks). Success is outcome-only and binary: the
+simulator checks a ground-truth goal predicate at the step limit. The paper reports 92\% for
+SmolVLA on \libgoal{}, while independent reproductions in the public LeRobot
+codebase~\citep{lerobot2024} land near 78--84\%~\citep{nanovla2025}. We plan around that gap rather
+than chase it.
+
+\paragraph{Why not PPO; reward-weighted regression.}
+PPO~\citep{schulman2017ppo} needs the ratio $\pi_\theta(a\mid s)/\pi_{\text{old}}(a\mid s)$, and so
+a tractable action likelihood, which a flow-matching policy does not provide cheaply. Recent work
+recovers a likelihood to run on-policy policy gradient, either by injecting noise for a per-step
+Gaussian log-prob (ReinFlow~\citep{reinflow2025}, $\pi$RL~\citep{chen2025pirl},
+Flow-GRPO~\citep{flowgrpo2025}) or by treating the denoising chain as an inner MDP
+(DPPO~\citep{ren2024dppo}). We take the other route and choose an objective that never needs one:
+reward-weighted, or advantage-weighted, regression~\citep{peters2007rwr,peng2019awr}, whose
+flow-matching instantiation is online reward-weighted fine-tuning of flow
+matching~\citep{orwcfm2025}. RL does move flow and VLA policies in other settings, often on
+generalization~\citep{simplevlarl2025,rftflow2025,chen2025pirl}; our question is whether the
+lightweight, likelihood-free version moves \emph{this} policy on LIBERO.
+
+\section{Method}
+\label{sec:method}
+
+\subsection{Supervised fine-tuning (the RL launch point)}
+We fine-tune \texttt{lerobot/smolvla\_base} on the \libgoal{} episodes of the
+\texttt{HuggingFaceVLA/libero} dataset (428 usable episodes, batch 64, with the VLM backbone frozen
+by default). Five non-obvious fixes were needed, and we document them for reproducibility: (i)
+disabling the Hub push that otherwise aborts training; (ii) working around a broken episode-to-file
+index in the dataset, which forces a full download and then an in-row \texttt{episode\_index}
+filter; (iii) a camera-key contract (\texttt{image}/\texttt{image2} to
+\texttt{camera1}/\texttt{camera2}) via \texttt{rename\_map}; (iv) the same \texttt{rename\_map} at
+evaluation; and (v) pre-creating the LIBERO config to avoid an \texttt{EOFError} in headless
+subprocesses. The run was preempted at 16k of 20k steps with converged loss (about 0.10); we
+evaluate the 16k checkpoint and pin it as the immutable RL reference $\psft$.
+
+\subsection{The RL loop: rollout, filter, reward-weighted fine-tune}
+One outer iteration, starting from the current policy $\pi_k$ (with $\pi_0=\psft$):
+\begin{enumerate}\itemsep2pt
+  \item \textbf{Collect.} Run $N$ rollouts per task in LIBERO under the exact eval contract
+  (relative control, \texttt{n\_action\_steps}=10, \texttt{rename\_map}, \texttt{MUJOCO\_GL=egl}).
+  Record each step's observation and executed action chunk, the terminal binary success
+  $r\in\{0,1\}$, and the step count.
+  \item \textbf{Filter and weight.} Keep $(\text{obs},\text{action})$ pairs from successful
+  trajectories. Weight each by a time-to-success factor $w=\exp(-\,\text{steps}/\tau_t)$, where the
+  per-task $\tau_t$ is the median success length, normalized globally to mean 1.
+  \item \textbf{Fine-tune.} Continue-train $\pi_k$ on the kept set with the flow-matching loss
+  scaled per-sample by $w$, plus the anchor below, at a small learning rate ($2\times 10^{-5}$) for
+  1000 steps, giving $\pi_{k+1}$.
+  \item \textbf{Gate.} Evaluate $\pi_{k+1}$ and stop early on regression.
+\end{enumerate}
+
+\paragraph{The sparse-binary collapse.}
+With $r\in\{0,1\}$ and no other signal, the return is binary, so reward-weighting is
+mathematically identical to \emph{filtering}: keep successes, drop failures, behavior-clone the
+rest. Under sparse binary reward our ``reward-weighted BC'' is rejection-sampling fine-tuning, the
+robotics analogue of best-of-$N$ followed by SFT on the passes. The time-to-success weight $w$ is
+the one cheap, non-degenerate reward shape that makes the weighting more than a filter, and we do
+not overstate it. What makes this RL rather than more SFT is the signal source: the environment's
+reward on the policy's own rollouts, not human demonstrations.
+
+\paragraph{The vector-field anchor (a tractable KL surrogate).}
+The exact marginal $\mathrm{KL}(\pi_\theta\,\Vert\,\psft)$ over action chunks is intractable for the
+same reason PPO is. We anchor the mechanism instead. Keeping a frozen copy of $\psft$, we penalize
+the squared distance between the two velocity fields on identical noised inputs,
+\begin{equation}
+  R_{\mathrm{vf}}(\theta) \;=\;
+  \mathbb{E}_{s\sim\text{rollout},\,t,\,\varepsilon}
+  \big\Vert\, v_\theta(x_t,t\mid s) - v_{\mathrm{SFT}}(x_t,t\mid s)\,\big\Vert^2 ,
+  \label{eq:rvf}
+\end{equation}
+added to the loss with weight $\beta$. This is the tractable analogue of the per-denoising-step KL
+that noise-space methods get for free, and it costs one frozen forward pass. Because the live and
+frozen policies share normalization and see the same $(\varepsilon,t)$, the penalty is exactly $0$
+at initialization and grows only as the policy drifts. The total per-iteration objective is
+\begin{equation}
+  \mathcal{L}(\theta) \;=\;
+  \underbrace{\mathbb{E}_b\!\left[\, w_b \cdot \ell_{\mathrm{fm}}(x_b;\theta)\,\right]}_{\text{reward-weighted flow-matching BC}}
+  \;+\; \beta\, R_{\mathrm{vf}}(\theta),
+  \label{eq:loss}
+\end{equation}
+with $\ell_{\mathrm{fm}}$ the per-sample SmolVLA flow-matching MSE. We hold the anchor fixed at
+$\pi_0$ across all iterations and use $\beta=10$ (a smoke sweep showed $\beta=50$ over-restrains,
+and $\beta=0$ is the pure-filtering baseline). The implementation captures $v_\theta$ as the output
+of \texttt{action\_out\_proj} via a forward hook, with no reimplementation of the forward pass.
+There is also an AWR reading: the reference pull is partly implicit in fitting weighted samples
+drawn from a policy that starts as $\psft$, and the explicit anchor holds it across iterations as
+$\pi_k$ drifts.
+
+\paragraph{The demo-seed remedy.}
+Filtered BC needs some successes to bootstrap. A goal-only policy on \libten{} scores about 0\%
+zero-shot (Section~\ref{sec:results}), so the filter starves. The remedy is to first SFT a
+\libten{} specialist from \texttt{smolvla\_base}, rather than from the goal SFT, which avoids a
+goal-transfer confound and lifts the policy off the floor so the loop has something to work with.
+
+\paragraph{The collection-equals-evaluation protocol.}
+The rollout success predicate equals LeRobot's $\pcsucc$ (we validate this as a smoke gate), so
+each iteration's collection \emph{is} that policy's per-task evaluation. Seeding rollouts
+deterministically (from 1000) makes the per-task numbers a paired evaluation: $\pi_0$, $\pi_1$, and
+$\pi_2$ see identical initial states, so per-task deltas are not confounded by initialization. This
+yields a paired $n{=}500$ evaluation on \libgoal{} (50 per task) and $n{=}20$ per task on \libten{}
+at no extra cost.
+
+\section{Experimental Setup}
+\label{sec:setup}
+
+All runs use lerobot 0.5.1, torch 2.10.0+cu128, transformers 5.3.0, python 3.12.13. Hardware is
+matched to the bottleneck: an A100-80GB for the GPU-bound SFT and fine-tune steps, and an L4 for the
+sim/CPU-bound rollouts and evaluation, where a larger GPU only idles through MuJoCo. Evaluation uses
+relative control, \texttt{n\_action\_steps}=10, the camera \texttt{rename\_map}, and one process per
+task; a multi-task eval crashes at the task transition with an EGL context-teardown error on
+long-running runtimes. The eval CI at $n{=}100$ is about $\pm$7--10 points once within-task
+clustering is accounted for, so we report per-task throughout and treat $n{=}500$ as the tighter,
+paired measurement. Total project compute fits a \$20--60 budget on preemptible Colab Pro+, with
+per-2000-step checkpointing to Drive for preemption resilience.
+
+\section{Results}
+\label{sec:results}
+
+Table~\ref{tab:headline} collects the headline numbers; Figures~\ref{fig:traj}--\ref{fig:sft}
+show the trajectories, the per-task structure, and the SFT contribution.
+
+\begin{table}[t]
+\centering
+\caption{Headline results. All success rates are $\pcsucc$ (\%). RL trajectories are paired
+(identical seeds across iterations). The \libten{} SFT figure (50.0, $n{=}100$) and its paired RL
+baseline ($\pi_0=44.0$, $n{=}20$ per task, different seeds) measure the same checkpoint under
+different protocols.}
+\label{tab:headline}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Stage & Suite & $n$ & Result \\
+\midrule
+Official baseline & \libgoal{} & 100 & 85.0 \\
+Goal SFT (ours, 16k/20k) & \libgoal{} & 100 & 89.0 \quad($+4.0$, within noise) \\
+RL (filtered BC, $\beta{=}10$) & \libgoal{} & 500 (paired) & $89.0 \to 91.0 \to 89.4$ \\
+Zero-shot probe (goal-only) & \libten{} & 10/task & $\sim$0 (starvation) \\
+Demo-seed SFT & \libten{} & 100 & 50.0 \\
+RL (filtered BC, $\beta{=}10$) & \libten{} & 20/task (paired) & $44.0 \to 47.5 \to 42.5$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figure1_trajectories}
+\caption{Overall success across RL iterations. In both regimes the trajectory rises one iteration
+and returns to (or below) the $\pi_0$ baseline (dashed) the next, so compounding is falsified.
+\emph{Left:} saturated \libgoal{} (paired $n{=}500$). \emph{Right:} unsaturated, demo-seeded
+\libten{} (paired $n{=}20$ per task).}
+\label{fig:traj}
+\end{figure}
+
+\subsection{Baseline and SFT (validated pipeline)}
+The official checkpoint scores 85.0\% on \libgoal{} ($n{=}100$), and no task scores 0\% (the floor
+is 60\%), which rules out the control-mode and camera-key failure modes that would crater every task
+uniformly. Our goal-only SFT reaches 89.0\% (Figure~\ref{fig:sft}, left). The $+4.0$ is
+directionally consistent with goal specialization but sits inside the $n{=}100$ CI, so it is not a
+claimed improvement. The SFT deliverables are a validated end-to-end pipeline and a clean checkpoint
+$\psft$ to launch RL from.
+
+\subsection{RL on saturated \libgoal{}: within-noise redistribution}
+The paired $n{=}500$ trajectory is $89.0 \to 91.0 \to 89.4$ (Figure~\ref{fig:traj}, left).
+Iteration 1 looks positive ($+2.0$), concentrated on the low-headroom tasks (task 9 $78\to90$, task
+4 $88\to100$). Iteration 2 does not compound; it regresses $-1.6$ and erases those gains (task 9
+$90\to80$, task 3 $86\to78$). $\pi_2$ is statistically indistinguishable from $\pi_0$ ($+0.4$). On a
+near-saturated suite the method redistributes success across tasks within noise rather than
+producing a durable aggregate gain (Figure~\ref{fig:pertask}, top).
+
+\subsection{Zero-shot \libten{}: the starvation failure mode}
+Evaluated zero-shot on \libten{}, the goal-only $\pi_0$ scores 0/10 on each probed task. With zero
+successful rollouts there is nothing for filtered BC to imitate, so the loop cannot bootstrap. This
+is the sparse-reward starvation failure, and it appears exactly where the headroom is largest. The
+slowness corroborates it: every episode runs to the long-horizon timeout.
+
+\subsection{Demo-seed remedy and RL on \libten{}}
+A \libten{} specialist SFT lifts success from about 0\% to 50.0\% ($n{=}100$; Figure~\ref{fig:sft},
+right), which removes the starvation. Running the same RL loop on this genuine headroom reproduces
+the \libgoal{} pattern: paired $44.0 \to 47.5 \to 42.5$ (Figure~\ref{fig:traj}, right). Iteration
+1's $+3.5$ is a marginal-task rescue, concentrated on tasks $\pi_0$ seeded with a few successes
+(task 3 $60\to75$, task 7 $25\to40$, task 4 $10\to20$); iteration 2 reverses exactly those tasks
+(task 3 to 55, task 7 to 25, task 4 to 10), landing $-1.5$ below $\pi_0$. Establishing the same null
+on an unsaturated, bootstrappable suite makes it stronger and more general than \libgoal{} alone.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figure2_pertask}
+\caption{Per-task success for $\pi_0/\pi_1/\pi_2$. \emph{Top:} \libgoal{} ($n{=}500$); gains and
+losses cancel across tasks. \emph{Bottom:} \libten{} ($n{=}20$ per task); the marginal tasks
+rescued in iteration 1 (t3, t4, t7) reverse in iteration 2, while the fully-starved task 8 (0 seed
+successes) stays on the floor.}
+\label{fig:pertask}
+\end{figure}
+
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{Two mechanisms.}
+The per-task data show why the aggregate does not move durably. First, rescue-then-reversal:
+lightweight RL transiently lifts weak tasks that the SFT policy seeded with at least a few
+successes, because the filter then has something to amplify, but the next iteration collects from an
+already-drifted policy under fixed seeds and reverses them. The up-then-down per-task signature is
+regression to the mean, or stochastic redistribution, not a learned gain. Second, the starvation
+floor: a task with zero seed successes (\libten{} task 8) cannot be bootstrapped by a filter at all
+and stays at 0 across iterations. The lone iteration-2 ``10'' is 2/20 seed luck rather than a
+bootstrap, since $\pi_1$ had no task-8 successes to imitate.
+
+\paragraph{Why the null is informative.}
+A negative result is most useful when an obvious confound does not explain it away. This one
+survives two natural objections. It is not just a ceiling effect, because it also holds on
+unsaturated \libten{} with real headroom, and it is not just starvation, because the demo-seed
+removes starvation and the gain still does not compound. What lightweight RL produces is a
+redistribution of success across tasks within measurement noise, in both regimes tested.
+
+\paragraph{Limitations.}
+The main ones. (i) Single seed per policy: the per-iteration swings are about 1 SD, so it is the
+up-then-down trajectory, not any single delta, that reads as noise. (ii) The \libten{} measurement
+is $n{=}20$ per task (binomial CI about $\pm$20), so the reliable figure is the aggregate. (iii) A
+single anchor strength $\beta{=}10$ rather than a full sweep. (iv) RL starts from a 16k
+(under-trained) SFT base, but the SFT-to-RL delta is measured against that same fixed base on both
+sides, so it does not contaminate the RL delta. (v) Sim-only, outcome-only binary reward; under it,
+``reward-weighted'' BC equals filtered BC plus a mild time-to-success weight. (vi) Few outer
+iterations. A claim-grade result would need $n{=}500$ with at least three seeds varying both
+training and evaluation seeds, tens of hours on \libten{}'s slow renderer, which we scope out and
+flag rather than approximate.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figure3_sft}
+\caption{The SFT contribution. \emph{Left:} goal-only SFT vs.\ the official baseline on \libgoal{}
+($+4.0$, within noise). \emph{Right:} the demo-seed SFT lifts \libten{} off the $\sim$0\% goal-only
+zero-shot floor to 50.0\%, which enables, but does not guarantee, an RL effect.}
+\label{fig:sft}
+\end{figure}
+
+\section{Conclusion and Future Work}
+
+We asked whether a tractable, flow-matching-compatible RL step (reward-weighted filtered BC with a
+vector-field trust-region anchor) improves a SmolVLA VLA beyond SFT on LIBERO, and tested it as
+carefully as a \$20--60 budget allows. Across a saturated in-distribution suite and an unsaturated
+demo-seeded one, the answer is no: success redistributes within noise rather than improving durably,
+through a rescue-then-reversal mechanism and a starvation floor. The deliverables are the method,
+the paired collection-equals-evaluation protocol, and a map of where this class of method can and
+cannot move a flow-matching policy. Natural next steps are a claim-grade evaluation ($n{=}500$, at
+least three seeds) to put a confidence interval on the flat delta; an anchor-strength ($\beta$)
+sweep; flow-matching-native on-policy methods that recover a tractable
+likelihood~\citep{ren2024dppo,chen2025pirl,reinflow2025,flowgrpo2025}, which target generalization
+rather than in-distribution success; and real-robot validation. The null, with its mechanisms, is
+the result.
+
+\paragraph{Reproducibility.} All six result files (\texttt{results/*.json}) are released with the
+exact per-task numbers, together with the figure-generation script, the three RL scripts (rollout,
+fine-tune, eval), and the SFT runbook with the five fixes. The deterministic list of trained
+episode indices accompanies the checkpoints.
+
+\small
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

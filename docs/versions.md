@@ -21,7 +21,7 @@
 <!-- VERSIONS_AUTOFILL_START -->
 _Not yet captured for the lerobot env. Run `bash scripts/setup_env.sh` inside the WSL2 conda env._
 
-**Reference data point (native Windows, 2026-06-09)** — confirms the GPU/driver,
+**Reference data point (native Windows, 2026-06-09)** confirms the GPU/driver,
 not the target lerobot env:
 ```
 gpu: NVIDIA GeForce RTX 4060 | VRAM 8.0 GiB | capability 8.9
