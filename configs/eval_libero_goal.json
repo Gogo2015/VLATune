@@ -1,0 +1,40 @@
+{
+  "_comment": "Baseline eval config for SmolVLA on LIBERO-Goal. These are the parameters the Colab notebook and any eval wrapper read. Flag names are reconciled against the official LeRobot v0.5 docs; ALWAYS re-confirm against `lerobot-eval --help` on the installed version (see scripts/reconcile_flags.sh -> docs/flags.md).",
+
+  "policy_path": "HuggingFaceVLA/smolvla_libero",
+  "base_policy_path": "lerobot/smolvla_base",
+
+  "env": {
+    "type": "libero",
+    "task": "libero_goal",
+    "control_mode": "relative",
+    "max_parallel_tasks": 1
+  },
+
+  "eval": {
+    "n_episodes": 10,
+    "batch_size": 4,
+    "_note": "10 episodes/task x 10 tasks = official protocol. batch_size raised for wall-time; n_episodes 50 is optional precision but ~14h on T4."
+  },
+
+  "policy_n_action_steps": 10,
+  "_n_action_steps_note": "CONFIRMED required for smolvla speed (2026-06-09): pass --policy.n_action_steps=10. Without it ~400s/episode; with it ~100s/episode.",
+
+  "rendering": {
+    "MUJOCO_GL": "egl",
+    "MUJOCO_GL_fallback": "osmesa"
+  },
+
+  "rename_map": {
+    "_status": "CONFIRMED_NOT_NEEDED (2026-06-09 Colab run, eval ran clean with no --rename_map)",
+    "_note": "HuggingFaceVLA/* LIBERO data + the lerobot libero env already use observation.images.image / image2, matching the policy. Syntax if ever needed: --rename_map='{\"observation.images.OLD\":\"observation.images.NEW\"}'",
+    "map": {}
+  },
+
+  "expected_results": {
+    "paper_libero_goal": 92.0,
+    "reproduced_range_low": 78.0,
+    "reproduced_range_high": 84.0,
+    "note": "Report the observed number as-is. Do NOT chase the paper's 92%. 0% success => check control_mode (relative vs absolute) and rename_map (image keys)."
+  }
+}

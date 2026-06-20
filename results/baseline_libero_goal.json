@@ -1,0 +1,47 @@
+{
+  "_note": "FINAL full-protocol baseline. Supersedes baseline_libero_goal_prelim.json (n=6 pipeline probe, 83.33%). Raw eval output archived in baselineeval/eval_info.json.",
+  "date": "2026-06-12",
+  "policy": "HuggingFaceVLA/smolvla_libero",
+  "suite": "libero_goal",
+  "hardware": "Colab Pro+ L4 + High-RAM, background execution",
+  "stack": {
+    "lerobot": "0.5.1",
+    "torch": "2.10.0+cu128",
+    "transformers": "5.3.0",
+    "python": "3.12.13"
+  },
+  "config": {
+    "env.type": "libero",
+    "env.task": "libero_goal",
+    "env.control_mode": "relative",
+    "env.max_parallel_tasks": 1,
+    "policy.n_action_steps": 10,
+    "eval.batch_size": 4,
+    "eval.n_episodes": 10,
+    "rename_map": "NONE (dataset/env keys match policy)",
+    "MUJOCO_GL": "egl",
+    "task_ids": "all 10 (single run, no chunking)"
+  },
+  "results": {
+    "pc_success": 85.0,
+    "n_episodes": 100,
+    "avg_sum_reward": 0.85,
+    "avg_max_reward": 0.85,
+    "eval_s": 8971.92,
+    "eval_ep_s": 89.72,
+    "per_task": {
+      "0": {"successes": 6, "n": 10},
+      "1": {"successes": 10, "n": 10},
+      "2": {"successes": 8, "n": 10},
+      "3": {"successes": 9, "n": 10},
+      "4": {"successes": 9, "n": 10},
+      "5": {"successes": 10, "n": 10},
+      "6": {"successes": 8, "n": 10},
+      "7": {"successes": 10, "n": 10},
+      "8": {"successes": 9, "n": 10},
+      "9": {"successes": 6, "n": 10}
+    }
+  },
+  "interpretation": "85.0% vs paper 92%, vs independent LeRobot reproductions ~78-84%. One point above the reproduction band — within binomial noise at n=100 (95% CI ~ +/-7pts). No 0% task (floor 60%, tasks 0 and 9), ruling out key-mismatch / control-mode failure modes. This is the SFT/RL comparison baseline.",
+  "wall_time_note": "2.49 h total, ~90 s/episode at batch_size=4 on L4."
+}
