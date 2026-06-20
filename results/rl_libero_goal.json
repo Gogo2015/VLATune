@@ -1,0 +1,44 @@
+{
+  "_note": "Phase 4 RL on LIBERO-Goal: reward-weighted / filtered behavior cloning (AWR/RWR adapted to the SmolVLA flow-matching policy) on the policy's own successful rollouts, with a vector-field-distillation anchor to a FIXED pi_SFT (design doc docs/phase4_rl_design.md). Two outer iterations run (pi_0 -> pi_1 -> pi_2). KEY METHOD: collection == eval -- each iteration's 500-rollout collection (50/task x 10, paired on seeds 1000+) IS that policy's per-task eval, so the per-task pc_success below is a true paired n=500 eval, not a training-set metric. Raw per-task rollouts + this map on Drive: VLATune/rl/rollouts_iter{1,2,3}/ and rollouts_iter3/pi_all_goal.json.",
+  "date": "2026-06-17",
+  "method": "Tier-A reward-weighted/filtered BC. Under sparse binary success the reward-weighting collapses to filtering (keep successful rollouts, BC on them) + a free time-to-success weight w=exp(-steps/tau). Anchor to pi_SFT = vector-field distillation (beta=10) -- NOT exact marginal KL (intractable for a flow policy, same reason PPO doesn't apply). Custom fine-tune loop (scripts/rl_finetune.py); per-iter: 1000 steps, lr 2e-5, batch 16; frozen anchor held FIXED at pi_0 every iteration.",
+  "policies": {
+    "pi_0": "SFT checkpoint smolvla_sft_goal_run1/last @ step 16000 (= Phase-3 SFT, 89.0% n=100). Pinned immutable as rl/rl_base_16k. This is BOTH the anchor reference and the RL comparison baseline.",
+    "pi_1": "rl_iter1_b10/checkpoints/001000 -- pi_0 fine-tuned on pi_0's successful rollouts (D_1).",
+    "pi_2": "rl_iter2_b10/checkpoints/001000 -- pi_1 fine-tuned on pi_1's successful rollouts (D_2), anchored to pi_0."
+  },
+  "suite": "libero_goal",
+  "hardware": "Colab Pro+ L4 + High-RAM (single-card loop: rollouts are the sim-bound sink, fine-tune is short).",
+  "stack": {"lerobot": "0.5.1", "torch": "2.10.0+cu128", "transformers": "5.3.0", "python": "3.12.13"},
+  "eval_protocol": {
+    "kind": "collection == eval (rollout success == lerobot pc_success, validated as smoke gate 2)",
+    "n_per_task": 50,
+    "n_episodes_total": 500,
+    "seeds": "paired, deterministic from batch index starting 1000 (identical seed set across pi_0/pi_1/pi_2)",
+    "env.control_mode": "relative",
+    "policy.n_action_steps": 10,
+    "n_envs": 4,
+    "rename_map": "{image->camera1, image2->camera2} (required for our checkpoints)",
+    "MUJOCO_GL": "egl"
+  },
+  "results": {
+    "overall_pc_success": {"pi_0": 89.0, "pi_1": 91.0, "pi_2": 89.4},
+    "per_task_pc_success": {
+      "pi_0": {"0": 78, "1": 98, "2": 94, "3": 82, "4": 88, "5": 98, "6": 76, "7": 100, "8": 98, "9": 78},
+      "pi_1": {"0": 80, "1": 98, "2": 90, "3": 86, "4": 100, "5": 92, "6": 80, "7": 100, "8": 94, "9": 90},
+      "pi_2": {"0": 84, "1": 100, "2": 90, "3": 78, "4": 98, "5": 92, "6": 76, "7": 96, "8": 100, "9": 80}
+    },
+    "delta_pi1_minus_pi0": {"0": 2, "1": 0, "2": -4, "3": 4, "4": 12, "5": -6, "6": 4, "7": 0, "8": -4, "9": 12, "overall": 2.0},
+    "delta_pi2_minus_pi1": {"0": 4, "1": 2, "2": 0, "3": -8, "4": -2, "5": 0, "6": -4, "7": -4, "8": 6, "9": -10, "overall_mean": -1.6}
+  },
+  "headline": "COMPOUNDING FALSIFIED. Goal trajectory pi_0 89.0 -> pi_1 91.0 -> pi_2 89.4: a bump, then a return to baseline. Iteration 2 REGRESSED -1.6 overall and erased iteration 1's headroom gains (task9 went 78->90->80, losing its entire +12; task3 82->86->78). pi_2 is statistically indistinguishable from pi_0 (+0.4).",
+  "interpretation": "On a near-saturated in-distribution suite (Goal ~89-91%), RL-lite (filtered/reward-weighted BC + vf anchor) produces a within-noise REDISTRIBUTION across tasks, not a durable aggregate gain. Iteration 1 looked positive (+2, concentrated on the low tasks 9 and 4) but iteration 2 did not compound -- it reversed most of it. The honest reading is that the +2 was noise, not signal, and the method's headroom on this suite is essentially nil. This matches the project's risk framing: a flat/null result on saturated in-distribution Goal, reported with the per-task trajectory, is itself a respectable deliverable -- and it directly motivates measuring on a less-saturated suite (LIBERO-Long / libero_10) where an RL effect could be visible.",
+  "confounds": [
+    "Single seed (per policy): the +2 / -1.6 per-iteration swings are ~1 SD; the up-then-down TRAJECTORY is the main evidence the gain isn't real. Claim-grade rigor = >=3 seeds (varying RL-training and eval seeds), design sec 10.",
+    "RL starts from a 16k (under-trained) SFT base, not a full 20k -- but the SFT->RL delta is measured against that same fixed base on both sides, so this does not contaminate the RL delta (design sec 7).",
+    "Single suite (Goal), saturated; sim-only, outcome-only binary reward; few outer iterations.",
+    "Under sparse binary reward, 'reward-weighted' BC == filtered BC; the time-to-success weight is a mild, free, non-degenerate signal -- not oversold."
+  ],
+  "next": "Pivot to the libero_10 (LIBERO-Long) OOD probe (design sec 8) -- eval pi_0/pi_1 there (goal-only -> OOD/near-zero-shot) to measure headroom; run the rollout->filter->fine-tune loop only if success is high enough for filtered BC to bootstrap. NOT more saturated-Goal iterations.",
+  "wall_time_note": "Run on Colab Pro+ (L4). A slow VM rendered ~2.5 min per 4-episode batch (synchronous vec-envs render roughly serially); single-process per-task collection was the most stable configuration."
+}

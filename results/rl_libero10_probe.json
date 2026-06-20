@@ -1,0 +1,52 @@
+{
+  "_note": "Phase 4 OOD HEADROOM PROBE (design doc docs/phase4_rl_design.md sec 8). The Goal-specialized RL anchor pi_0 (= rl_base_16k, the 16k SFT that scores 89.0% on LIBERO-Goal) is evaluated ZERO-SHOT on libero_10 (LIBERO-Long) to answer the sec-8 question: is there an unsaturated suite where an RL effect could be visible, or does filtered/reward-weighted BC STARVE there (no successful rollouts to learn from)? Method = collection==eval (rl_rollout.py --suite libero_10): each rollout's terminal binary success IS the per-task pc_success, validated as Phase-4 smoke gate 2. Raw per-task kept-rollout .pt on Drive: VLATune/rl/probe_libero10_pi0/rollouts_task{tid}.pt (a tiny ~1.3KB pickle = empty kept-list when 0 successes). THIS IS A PROBE, NOT A CLAIM (n=10/task, single policy, 5-of-10 tasks); it answers feasibility, not effect size.",
+  "status": "CLOSED (Phase 4, 2026-06-17). The starvation conclusion was DECIDED by tasks 0,1 = 0/10 each -- a binary feasibility question (can filtered/reward-weighted BC bootstrap on libero_10? -> NO: zero successful rollouts to filter), for which effect-size precision is unnecessary once two independent tasks score 0/10. tasks 2-4 and pi_1 were therefore NOT run to completion; their per-task entries are left as not_finalized rather than fabricated. Superseded by Phase 5 Track B (demo-seed libero_10), which SFTs pi_0 off 0% so the filter no longer starves.",
+  "date": "2026-06-17",
+  "method": "Zero-shot transfer eval of a goal-only policy on an OOD suite, via the rollout collector (collection==eval). For each libero_10 task, run n rollouts of pi_0 under the EXACT eval contract (relative control, n_action_steps=10, camera rename_map image->camera1/image2->camera2, MUJOCO_GL=egl, paired seeds from 1000); the fraction whose terminal LIBERO goal-predicate fires within the step limit is pc_success. No fine-tuning is run on libero_10 -- the probe's purpose is to measure whether filtered BC COULD bootstrap there at all.",
+  "policies": {
+    "pi_0": "rl_base_16k/pretrained_model = the pinned Phase-4 anchor = smolvla_sft_goal_run1 `last` @ step 16000 (89.0% n=100 on LIBERO-Goal; results/sft_libero_goal.json). Goal-suite-only SFT of lerobot/smolvla_base.",
+    "pi_1_not_probed": "rl_iter1_b10/checkpoints/001000 (the overall-best Goal policy, 91.0%). NOT probed on libero_10: pi_1 = pi_0 fine-tuned on pi_0's *Goal* successful rollouts, so it carries no libero_10 skill and is expected to be ~identically near-zero on this OOD suite. A 1-task spot-check could confirm but is a foregone ~0 at ~24 min/task of slow timeout episodes."
+  },
+  "suite": "libero_10",
+  "suite_note": "LIBERO-Long: 10 long-horizon, multi-step tasks. OUT-OF-DISTRIBUTION for a libero_goal-only policy (different tasks/scenes/instructions and a far longer horizon). Reproduced range in the literature ~52-71% for in-distribution training; near-zero-shot for our goal-only checkpoint.",
+  "hardware": "Colab Pro+ L4 + High-RAM (single-card; sim-bound).",
+  "stack": {"lerobot": "0.5.1", "torch": "2.10.0+cu128", "transformers": "5.3.0", "python": "3.12.13"},
+  "eval_protocol": {
+    "kind": "collection == eval (rollout binary success == lerobot pc_success, Phase-4 smoke gate 2)",
+    "n_per_task": 10,
+    "tasks_probed": [0, 1, 2, 3, 4],
+    "tasks_probed_note": "5 of 10 libero_10 tasks in ONE process (20 envs); building all 10 at n_envs=4 = 40 envs risks a host-RAM OOM (Phase-4 ops note). A second process would cover 5-9 if warranted -- not warranted given tasks 0,1 = 0/10.",
+    "n_envs": 4,
+    "env.control_mode": "relative",
+    "policy.n_action_steps": 10,
+    "rename_map": "{observation.images.image->camera1, observation.images.image2->camera2}",
+    "MUJOCO_GL": "egl",
+    "seeds": "paired, deterministic from batch index starting 1000"
+  },
+  "results": {
+    "per_task_pc_success": {
+      "pi_0": {"0": 0.0, "1": 0.0, "2": "not_finalized", "3": "not_finalized", "4": "not_finalized"}
+    },
+    "per_task_kept_episodes": {"0": 0, "1": 0},
+    "completed_tasks": {
+      "0": {"successes": 0, "n": 10, "pc_success": 0.0},
+      "1": {"successes": 0, "n": 10, "pc_success": 0.0}
+    }
+  },
+  "headline": "STARVATION CONFIRMED (sec 8 caveat). The goal-only RL anchor transfers to LIBERO-Long at ~0%: task0 = 0/10 and task1 = 0/10 (task2 trending 0/8). With zero successful rollouts there is NOTHING for filtered/reward-weighted BC to filter or imitate, so the rollout->filter->fine-tune loop CANNOT bootstrap on libero_10. The unsaturated suite that could have shown an RL effect is too far OOD for this method to start.",
+  "interpretation": "This is the exact failure mode design sec 8 flagged: 'filtered BC needs SOME successes to bootstrap -- if the success rate is very low, the filter starves (sparse reward bites hardest exactly where there is the most headroom).' A goal-only SmolVLA never completes a long-horizon libero_10 task within the step limit, so the method has no signal to learn from. Combined with the Goal result (results/rl_libero_goal.json: RL-lite is a within-noise REDISTRIBUTION on the saturated in-distribution suite, no durable aggregate gain), Phase 4 yields a clean, honest DUAL outcome: (1) on saturated in-distribution Goal, RL-lite produces no measurable headroom; (2) on unsaturated OOD libero_10, the policy is too far below threshold for filtered BC to even begin. Neither is an RL gain -- and both are legitimate, defensible findings, consistent with PROJECT_EXPLAINER's stance that an honest null/negative is a respectable deliverable.",
+  "corroborating_evidence": "Slowness IS signal here: every libero_10 episode ran to the FULL long-horizon timeout (no early success termination), so a batch of 4 took ~8 min vs ~2-2.5 min for Goal. Near-total failure is the cause of the slowness, independently corroborating the 0% read.",
+  "confounds": [
+    "Probe-grade, not claim-grade: n=10/task, 5 of 10 tasks, single policy (pi_0). But 0/10 on two independent tasks is decisive for the binary feasibility question (can filtered BC bootstrap? -> no); effect-size precision is not needed to conclude starvation.",
+    "Only pi_0 probed; pi_1 (Goal-fine-tuned) expected ~identical on OOD libero_10 (no libero_10 skill added by Goal fine-tuning).",
+    "pi_0 is the 16k (under-trained vs 20k) SFT -- irrelevant here: a fully-trained goal-only policy would also be ~0 zero-shot on LIBERO-Long.",
+    "Sim-only; outcome-only binary success; goal-only base by design."
+  ],
+  "decision": "Do NOT run the rollout->filter->fine-tune loop on libero_10 from this checkpoint -- it starves (sec 8). The honest deliverable is this descriptive OOD null. Phase 4's reportable result is the methodology + the dual null (Goal redistribution + libero_10 starvation), not an RL improvement.",
+  "what_would_make_rl_measurable": [
+    "DEMO-SEED libero_10: first SFT pi_0 on a small number of libero_10 demonstrations to lift it off 0% (give it nonzero success to bootstrap), THEN apply the rollout->filter->fine-tune loop. This is the sec-8 'demo-seed' fallback and the most direct route to a measurable RL effect on an unsaturated suite.",
+    "A less-extreme OOD probe with nonzero base success: held-out Goal tasks (train RL on 8, eval on 2) or perturbed initial states -- in-distribution-ish OOD where the policy already succeeds sometimes, so the filter does not starve.",
+    "Where measurable, claim-grade rigor (design sec 10): n=500 eval episodes (50/task x 10), >=3 seeds varying both RL-train and eval seeds, report mean +/- std, confounds stated up front."
+  ],
+  "wall_time_note": "Single L4, ~8 min per batch of 4 (every episode runs to the long-horizon timeout) -- ~23 min/task at n=10. Background execution plus per-task .pt checkpointing to Drive made the run robust to a disconnected monitoring session."
+}
