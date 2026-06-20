@@ -1,0 +1,29 @@
+{
+  "_note": "Phase 5 Track B, Stage 1: SFT a libero_10 (LIBERO-Long) SPECIALIST as the demo-seed remedy for the Phase-4 sec-8 starvation (results/rl_libero10_probe.json: goal-only pi_0 = 0/10 zero-shot on libero_10 -> filtered BC starves). lerobot/smolvla_base fine-tuned on the 379 libero_10 episodes, then evaluated on libero_10 n=100. This pi_0^L10 is the RL base + vf-anchor reference for Stage-3 RL (pinned immutable at Drive VLATune/rl/rl_base_l10/).",
+  "date": "2026-06-18",
+  "headline": "DEMO-SEED WORKED: SFT lifts libero_10 from ~0% (goal-only zero-shot) to 50.0% (n=100). The sec-8 eval gate (>=~30%) is PASSED, so filtered/reward-weighted BC will NOT starve on libero_10 -> Stage-3 RL can bootstrap.",
+  "method": "Supervised fine-tuning (behavior cloning) of lerobot/smolvla_base on the 379 libero_10 episodes of HuggingFaceVLA/libero (filtered via in-row episode_index; broken-file-index workaround = full data+meta download). Identical recipe to the Phase-3 goal SFT, swapping the suite. Eval = per-task single-process lerobot-eval subprocesses (the multi-task EGL-teardown crash is thereby avoided).",
+  "policies": {
+    "pi_0_L10": "smolvla_sft_l10_run1/checkpoints/last @ step 20000; pinned -> rl/rl_base_l10/pretrained_model. Fine-tuned FROM lerobot/smolvla_base (NOT the goal SFT rl_base_16k -- starting from the goal SFT would fold a Goal-pretraining-transfer confound into the libero_10 result; smolvla_base keeps it the clean analog of the Goal SFT)."
+  },
+  "suite": "libero_10",
+  "dataset": {"repo": "HuggingFaceVLA/libero", "suite": "libero_10", "n_episodes": 379, "n_frames": 16992, "n_tasks": 10, "note": "textbook 50x10=500; processing drops it to 379 (cf. Goal's 428). ~45 frames/episode -- modest for long-horizon (this processed dataset is decimated). Episode list: results/dataset_l10_episodes.json (to be committed)."},
+  "train": {"base": "lerobot/smolvla_base", "steps": 20000, "batch_size": 64, "save_freq": 2000, "rename_map": "image->camera1,image2->camera2", "push_to_hub": false, "final_loss": 0.031, "epochs": 75.33, "hardware": "Colab Pro+ A100-80GB", "wall_h_approx": 2.9},
+  "stack": {"lerobot": "0.5.1", "torch": "2.10.0+cu128", "transformers": "5.3.0", "python": "3.12.13"},
+  "eval_protocol": {"n_per_task": 10, "n_episodes_total": 100, "env.control_mode": "relative", "policy.n_action_steps": 10, "eval.batch_size": 4, "rename_map": "image->camera1,image2->camera2", "MUJOCO_GL": "egl", "per_task_subprocess": true, "hardware": "Colab Pro+ A100 (ran on A100 for unattended autonomy; eval is sim/CPU-bound, so this is a deliberate units-over-frugality call -- L4 is the cheaper hardware match)"},
+  "results": {
+    "overall_pc_success": 50.0,
+    "n_episodes": 100,
+    "per_task_pc_success": {"0": 20, "1": 70, "2": 80, "3": 70, "4": 10, "5": 80, "6": 50, "7": 30, "8": 20, "9": 70}
+  },
+  "comparison": {"goal_only_probe_zero_shot": "~0% (results/rl_libero10_probe.json: 0/10 on the probed libero_10 tasks)", "literature_in_distribution": "~52-71%", "delta_vs_probe": "+~50 pts (0 -> 50)"},
+  "interpretation": "The sec-8 demo-seed remedy works: a libero_10-specialist SFT reaches 50% (just below the lower edge of the ~52-71% literature band -- reasonable for 379 eps / 20k steps), vs ~0% for the goal-only policy. This removes the filtered-BC starvation that blocked Phase-4 RL on libero_10. The per-task spread (weak: t4=10, t0=20, t8=20, t7=30; strong: t1/t2/t5=70-80) is the headroom map for Stage-3 RL -- the weak tasks are where a measurable RL effect would show.",
+  "confounds": [
+    "n=10/task -> per-task numbers are noisy (binomial CI ~+/-25 pts at n=10); the overall n=100 (~+/-7-10) is the reliable figure.",
+    "16992 frames (~45/episode) is modest for long-horizon; ~75 epochs invites overfitting -- but the policy generalized to 50% on fresh initial states (loss plateaued ~0.03, did not crash toward 0), so the last (20k) checkpoint was kept as the anchor (an earlier checkpoint was on standby had it underperformed).",
+    "Eval ran on A100 (sim-bound; a deliberate units-over-frugality call for unattended autonomy).",
+    "SFT from smolvla_base, not rl_base_16k -- intentional (clean analog of the Goal SFT; avoids a Goal-transfer confound).",
+    "Sim-only, outcome-only binary success."
+  ],
+  "next": "Stage-3 RL on libero_10: rollout->filter(+time-to-success weight)->reward-weighted BC with vf-beta anchor to the frozen pi_0^L10; collection==eval per-task. Measure whether libero_10 success rises DURABLY across iterations or redistributes within noise (the Goal pattern). Scoped (rollouts/task, iters, seeds) to the budget given libero_10's slow render (~2 min/episode); claim-grade where a signal appears."
+}
