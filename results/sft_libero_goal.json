@@ -1,0 +1,67 @@
+{
+  "_note": "Phase 3 SFT (goal-only) checkpoint eval, full 100-episode protocol. Checkpoint = smolvla_sft_goal_run1 `last` at step 16000 (the 20k run was PREEMPTED on the A100 ~02:56 UTC right after the 16k checkpoint; `last` + training_state intact and resumable, but evaluated at 16k rather than 20k). Raw eval output on Drive: VLATune/sft/eval_smolvla_sft_goal_run1/eval_info.json (+ per-episode videos). Compare to baseline_libero_goal.json (85.0%).",
+  "date": "2026-06-15",
+  "policy": "VLATune SFT: lerobot/smolvla_base fine-tuned on 428 libero_goal episodes (smolvla_sft_goal_run1, checkpoint=last @ step 16000)",
+  "base_policy": "lerobot/smolvla_base",
+  "suite": "libero_goal",
+  "hardware": "Colab Pro+ L4 + High-RAM (eval); A100-80GB (SFT training)",
+  "stack": {
+    "lerobot": "0.5.1",
+    "torch": "2.10.0+cu128 (fresh lerobot[smolvla,libero] install; pin via eval notebook Cell 1)",
+    "transformers": "5.3.0",
+    "python": "3.12.13"
+  },
+  "training": {
+    "steps_target": 20000,
+    "steps_reached": 16000,
+    "preemption_note": "A100 runtime preempted ~02:56 UTC after saving checkpoint 016000; no 018000/020000. `last` and training_state (optimizer/scheduler/rng) intact -> resumable to 20k if desired.",
+    "batch_size": 64,
+    "save_freq": 2000,
+    "dataset": "HuggingFaceVLA/libero, 428 libero_goal episodes (episode_index filter; broken file_index worked around per docs/phase3_sft_runbook.md)",
+    "loss_trajectory": "step200=1.41 -> 2k=0.37 -> 9.2k=0.102 (monotone, converging)"
+  },
+  "config": {
+    "env.type": "libero",
+    "env.task": "libero_goal",
+    "env.control_mode": "relative",
+    "env.max_parallel_tasks": 1,
+    "policy.n_action_steps": 10,
+    "eval.batch_size": 4,
+    "eval.n_episodes": 10,
+    "rename_map": "{observation.images.image->camera1, observation.images.image2->camera2} (REQUIRED for our SFT checkpoint; baseline did NOT need it)",
+    "MUJOCO_GL": "egl",
+    "task_ids": "all 10 (single run, no chunking)"
+  },
+  "results": {
+    "pc_success": 89.0,
+    "n_episodes": 100,
+    "avg_sum_reward": 0.89,
+    "avg_max_reward": 0.89,
+    "eval_s": 7978.24,
+    "eval_ep_s": 79.78,
+    "per_task": {
+      "0": {"successes": 10, "n": 10},
+      "1": {"successes": 9, "n": 10},
+      "2": {"successes": 9, "n": 10},
+      "3": {"successes": 8, "n": 10},
+      "4": {"successes": 10, "n": 10},
+      "5": {"successes": 10, "n": 10},
+      "6": {"successes": 7, "n": 10},
+      "7": {"successes": 10, "n": 10},
+      "8": {"successes": 10, "n": 10},
+      "9": {"successes": 6, "n": 10}
+    }
+  },
+  "comparison_to_baseline": {
+    "baseline_policy": "HuggingFaceVLA/smolvla_libero (official, multi-suite)",
+    "baseline_pc_success": 85.0,
+    "sft_pc_success": 89.0,
+    "delta_points": 4.0,
+    "baseline_per_task": {"0": 6, "1": 10, "2": 8, "3": 9, "4": 9, "5": 10, "6": 8, "7": 10, "8": 9, "9": 6},
+    "sft_per_task":      {"0": 10, "1": 9, "2": 9, "3": 8, "4": 10, "5": 10, "6": 7, "7": 10, "8": 10, "9": 6},
+    "per_task_delta":    {"0": 4, "1": -1, "2": 1, "3": -1, "4": 1, "5": 0, "6": -1, "7": 0, "8": 1, "9": 0},
+    "note": "Goal-only SFT (16k steps) beats the official multi-suite checkpoint by +4.0 pts on LIBERO-Goal. Largest gain task 0 (+4: 6->10); small +/-1 jitter elsewhere. Both n=100; +4 pts is within binomial noise (95% CI ~+/-7 pts at n=100) but directionally consistent with goal-suite specialization. Headline for the project remains the Phase-4 SFT->RL delta on top of THIS checkpoint."
+  },
+  "interpretation": "Goal-only SFT of smolvla_base reaches 89.0% on LIBERO-Goal at step 16000 (target 20k, run preempted), vs 85.0% for the official baseline. Validates the full SFT pipeline end-to-end (camera rename_map, broken-dataset episode_index workaround, libero config preinit). No 0% task (floor 60%, task 9) rules out key-mismatch / control-mode failure modes. This checkpoint is the Phase-4 RL starting point.",
+  "wall_time_note": "Eval 2.22 h (~80 s/episode) on L4 batch_size=4. SFT training ~2.2 h to step 16000 on A100 batch_size=64 before preemption."
+}
